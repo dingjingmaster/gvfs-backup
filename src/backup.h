@@ -9,6 +9,7 @@
 
 G_BEGIN_DECLS
 
+#define BACKUP_STR                                      "andsec-backup"
 #define STR_FREE(f)                                     G_STMT_START { if (f) { g_free (f); f = NULL; } } G_STMT_END
 
 #define BACKUP_FILE_TYPE                                (backup_file_get_type())
@@ -22,7 +23,28 @@ G_DECLARE_FINAL_TYPE(BackupFile, backup_file, BackupFile, BACKUP_FILE_TYPE, GObj
 
 GType                   backup_file_get_type            (void) G_GNUC_CONST;
 GFile*                  backup_file_new_for_path        (const gchar* path);
-char*                   backup_file_get_path            (GFile* self);
+
+/**
+ * @brief 执行文件备份操作
+ * @param self 要备份的文件
+ * @return 成功返回 TRUE，失败返回 FALSE
+ */
+gboolean                backup_file_backup              (GFile* self);
+
+/**
+ * @brief 执行文件备份
+ * @param path 要备份文件的绝对路径
+ * @return 成功返回 TRUE，失败返回 FALSE
+ */
+gboolean                backup_file_backup_by_abspath   (const char* path);
+
+/**
+ * @brief 执行恢复
+ */
+gboolean                backup_file_restore             (GFile* self);
+gboolean                backup_file_restore_by_abspath  (const char* path);
+
+void                    backup_file_register            ();
 
 G_END_DECLS
 
