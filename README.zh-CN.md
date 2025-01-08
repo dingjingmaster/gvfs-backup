@@ -7,13 +7,13 @@
     <a href="/README.zh-CN.md">简体中文</a>
 </p>
 
-File backup is implemented based on gvfs, and the latest three versions of the same file are kept.
+基于gvfs实现文件备份，同一个文件保留最新的三个版本。
 
-## Depend on
+## 依赖
 
 - glib-2.0
 
-## compile
+## 编译
 
 ```shell
 cmake -B build .
