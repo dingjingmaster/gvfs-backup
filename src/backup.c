@@ -101,7 +101,7 @@ GFile* backup_file_new_for_path (const gchar* path)
 
 gboolean backup_file_backup(GFile* self)
 {
-    g_return_val_if_fail (BACKUP_IS_FILE(self), FALSE);
+    g_return_val_if_fail (!BACKUP_IS_FILE(self), FALSE);
 
     return vfs_backup(self, NULL, NULL);
 }
@@ -112,8 +112,8 @@ gboolean backup_file_backup_by_abspath(const char* path)
 
     gboolean result = FALSE;
 
-    GFile* file = backup_file_new_for_path (path);
-    if (BACKUP_IS_FILE (file)) {
+    GFile* file = g_file_new_for_path (path);
+    if (G_IS_FILE(file)) {
         result = backup_file_backup(file);
         g_object_unref (file);
     }

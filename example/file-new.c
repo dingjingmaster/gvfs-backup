@@ -112,6 +112,18 @@ int main (int argc, char* argv[])
         g_object_unref(file1);
     }
 
+    {
+        // backup 2
+        GFile* file1 = g_file_new_for_path("/tmp/file6");
+        backup_file_backup(file1);
+        g_object_unref(file1);
+    }
+
+    {
+        // backup 3
+        backup_file_backup_by_abspath("/tmp/file7");
+    }
+
 
     return 0;
 }
