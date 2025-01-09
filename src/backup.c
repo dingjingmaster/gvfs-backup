@@ -352,7 +352,6 @@ static gboolean vfs_backup (GFile* file1, BackupFile* file2, GError** error)
 
         if (!make_backup_dirs_if_needed (mountPoint)) { break; };
         if (!do_backup(path, mountPoint)) { break; }
-
         ret = TRUE;
     } while (0);
 
@@ -593,6 +592,8 @@ static gboolean do_backup (const char* path, const char* mountPoint)
             backupMetaFile.backupFileCtxMD52 = backupMetaFile.backupFileCtxMD53;
             backupMetaFile.backupFileTimestamp2 = backupMetaFile.backupFileTimestamp3;
             rename(backupFile3, backupFile2);
+            backupMetaFile.backupFileCtxMD53 = NULL;
+            backupMetaFile.backupFileTimestamp3 = 0;
             ret = g_file_copy(backupFileF, backupFileF3, G_FILE_COPY_OVERWRITE | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             if (ret) {
                 backupMetaFile.backupFileCtxMD53 = g_strdup(fileContentMD5);
@@ -601,6 +602,8 @@ static gboolean do_backup (const char* path, const char* mountPoint)
         }
         else if (backupMetaFile.backupFileCtxMD52) {
             if (0 == g_strcmp0(backupMetaFile.backupFileCtxMD52, fileContentMD5)) { ret = TRUE; break; }
+            backupMetaFile.backupFileCtxMD53 = NULL;
+            backupMetaFile.backupFileTimestamp3 = 0;
             ret = g_file_copy(backupFileF, backupFileF3, G_FILE_COPY_OVERWRITE | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             if (ret) {
                 backupMetaFile.backupFileCtxMD53 = g_strdup(fileContentMD5);
@@ -609,6 +612,8 @@ static gboolean do_backup (const char* path, const char* mountPoint)
         }
         else if (backupMetaFile.backupFileCtxMD51) {
             if (0 == g_strcmp0(backupMetaFile.backupFileCtxMD51, fileContentMD5)) { ret = TRUE; break; }
+            backupMetaFile.backupFileCtxMD52 = NULL;
+            backupMetaFile.backupFileTimestamp2 = 0;
             ret = g_file_copy(backupFileF, backupFileF2, G_FILE_COPY_OVERWRITE | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             if (ret) {
                 backupMetaFile.backupFileCtxMD52 = g_strdup(fileContentMD5);
@@ -616,13 +621,14 @@ static gboolean do_backup (const char* path, const char* mountPoint)
             }
         }
         else {
+            backupMetaFile.backupFileCtxMD51 = NULL;
+            backupMetaFile.backupFileTimestamp1 = 0;
             ret = g_file_copy(backupFileF, backupFileF1, G_FILE_COPY_OVERWRITE | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             if (ret) {
                 backupMetaFile.backupFileCtxMD51 = g_strdup(fileContentMD5);
                 backupMetaFile.backupFileTimestamp1 = time(NULL);
             }
         }
-
         if (ret) {
             backup_meta_save(&backupMetaFile, filePathMD5, mountPoint);
         }
@@ -746,17 +752,18 @@ static gboolean backup_meta_parse (BackupMetaFile* info, const char* filePath, c
                 info->version = verInt;
                 if (1 == verInt) {
                     if (g_strv_length(strArr) != 9) {
+                        printf("[PARSE] is not 9\n");
                         break;
                     }
                     if (strArr[1]) { info->srcFilePath          = g_strdup(strArr[1]); }
                     if (strArr[2]) { info->srcFilePathMD5       = g_strdup(strArr[2]); }
 
-                    if (strArr[3]) { info->backupFileCtxMD51    = g_strdup(strArr[3]); }
-                    if (strArr[4]) { info->backupFileTimestamp1 = strtoll(strArr[4], NULL, 10); }
-                    if (strArr[5]) { info->backupFileCtxMD52    = g_strdup(strArr[5]); }
-                    if (strArr[6]) { info->backupFileTimestamp2 = strtoll(strArr[6], NULL, 10); }
-                    if (strArr[7]) { info->backupFileCtxMD53    = g_strdup(strArr[7]); }
-                    if (strArr[8]) { info->backupFileTimestamp3 = strtoll(strArr[8], NULL, 10); }
+                    if (strArr[3] && strlen(strArr[3]) > 0) { info->backupFileCtxMD51    = g_strdup(strArr[3]); }
+                    if (strArr[4] && strlen(strArr[4]) > 0) { info->backupFileTimestamp1 = strtoll(strArr[4], NULL, 10); }
+                    if (strArr[5] && strlen(strArr[5]) > 0) { info->backupFileCtxMD52    = g_strdup(strArr[5]); }
+                    if (strArr[6] && strlen(strArr[6]) > 0) { info->backupFileTimestamp2 = strtoll(strArr[6], NULL, 10); }
+                    if (strArr[7] && strlen(strArr[7]) > 0) { info->backupFileCtxMD53    = g_strdup(strArr[7]); }
+                    if (strArr[8] && strlen(strArr[8]) > 0) { info->backupFileTimestamp3 = strtoll(strArr[8], NULL, 10); }
                 }
             }
         }
@@ -794,8 +801,9 @@ static gboolean backup_meta_save (const BackupMetaFile* info, const char* filePa
                     info->backupFileCtxMD53 ? info->backupFileCtxMD53 : "", info->backupFileTimestamp3);
         BREAK_NULL(metaFileCtx);
 
-        fwrite(metaFile, 1, strlen(metaFileCtx), metaFr);
+        fwrite(metaFileCtx, 1, strlen(metaFileCtx), metaFr);
         fclose(metaFr);
+        metaFr = NULL;
         ret = TRUE;
     } while (0);
 

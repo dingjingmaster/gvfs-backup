@@ -85,11 +85,13 @@ int main (int argc, char* argv[])
     }
 
     {
-        // GList* ls = get_all_mount_points();
-        // for (const GList* id = ls; id; id = id->next) {
-        //     printf("%s\n", (char*) id->data);
-        // }
-        // g_list_free_full(ls, g_free);
+        // backup
+        GFile* file1 = g_file_new_for_path("/tmp/file5");
+        GFile* file2 = g_file_new_for_uri(BACKUP_STR ":///");
+        gboolean result = g_file_copy(file1, file2, 0, NULL, NULL, NULL, NULL);
+        printf("[Backup] result: %s\n", result ? "true" : "false");
+        g_object_unref(file1);
+        g_object_unref(file2);
     }
 
 
