@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-#define NOT_NULL_RUN(x, f,...)  G_STMT_START if (x) { f(x, ##__VA_ARGS__); } G_STMT_END
+#define NOT_NULL_RUN(x,f,...)   G_STMT_START if (x) { f(x, ##__VA_ARGS__); } G_STMT_END
 #define BREAK_NULL(x)           G_STMT_START if ((x) == NULL) { break; } G_STMT_END
 #define G_OBJ_FREE(x)           G_STMT_START if (G_IS_OBJECT(x)) {g_object_unref (G_OBJECT(x)); x = NULL;} G_STMT_END
 
