@@ -1,4 +1,5 @@
 .idea/
+.ccls-cache/
 cmake-build-*/
 # Prerequisites
 *.d
