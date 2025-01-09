@@ -64,6 +64,7 @@ static gboolean     vfs_file_backup_restore     (GFile* src, GFile* dest, GFileC
 static GList*       get_all_mount_points        ();
 static char*        read_line                   (FILE* fr);
 static char*        get_mount_point_by_uri      (GFile* file);
+static void         file_path_format            (char* filePath);
 static char*        get_file_content_md5        (const char* path);
 static char*        get_file_path_md5           (const char* path);
 static gboolean     make_backup_dirs_if_needed  (const char* mountPoint);
@@ -221,21 +222,28 @@ static void backup_file_set_path_and_uri(BackupFile* obj, const char* pu)
 {
     g_return_if_fail (BACKUP_IS_FILE(obj) && pu);
 
-    const int puLen = strlen (pu);
-    const int schemaLen = strlen(BACKUP_STR);
+    const int puLen = (int) strlen (pu);
+    const int schemaLen = (int) strlen(BACKUP_STR);
 
     STR_FREE(obj->fileURI);
     STR_FREE(obj->filePath);
 
-    // is uri
+    // format
+    char* dupPath = NULL;
     if ((puLen - schemaLen >= 3) && (0 == strncmp(pu, BACKUP_STR, schemaLen)) && ('/' == pu[schemaLen + 3])) {
-        obj->fileURI = g_strdup (pu);
-        obj->filePath = g_strdup (pu + schemaLen + 4);
+        dupPath = g_strdup(pu + schemaLen + 4);
     }
     else if (puLen > 0 && '/' == pu[0]) {
-        obj->filePath = g_strdup (pu);
-        obj->fileURI = g_strdup_printf ("%s://%s", BACKUP_STR, pu);
+        dupPath = g_strdup(pu);
     }
+
+    if (dupPath) {
+        file_path_format(dupPath);
+        obj->filePath = g_strdup (dupPath);
+        obj->fileURI = g_strdup_printf ("%s://%s", BACKUP_STR, dupPath);
+    }
+
+    STR_FREE (dupPath);
 }
 
 static void backup_file_interface_init (GFileIface* interface)
@@ -823,4 +831,21 @@ static void backup_meta_free (BackupMetaFile* info)
     STR_FREE(info->backupFileCtxMD51);
     STR_FREE(info->backupFileCtxMD52);
     STR_FREE(info->backupFileCtxMD53);
+}
+
+static void file_path_format (char* filePath)
+{
+    g_return_if_fail(filePath);
+
+    int i = 0;
+    const int fLen = (int) strlen (filePath);
+    for (i = 0; filePath[i]; ++i) {
+        while (filePath[i] && '/' == filePath[i] && '/' == filePath[i + 1]) {
+            for (int j = i; filePath[j] || j < fLen; filePath[j] = filePath[j + 1], ++j);
+        }
+    }
+
+    if ((i - 1 >= 0) && filePath[i - 1] == '/') {
+        filePath[i - 1] = '\0';
+    }
 }
