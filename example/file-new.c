@@ -124,6 +124,21 @@ int main (int argc, char* argv[])
         backup_file_backup_by_abspath("/tmp/file7");
     }
 
+    {
+        // restore
+        gboolean res = backup_file_restore_by_abspath("/tmp/file7");
+        printf("[Restore] res: %s\n", res ? "true" : "false");
+    }
+
+    {
+        // backup && restore
+        gboolean res = FALSE;
+        res = backup_file_backup_by_abspath("/tmp/file8.txt");
+        printf("[Backup] res: %s\n", res ? "true" : "false");
+        res = backup_file_restore_by_abspath("/tmp/file8.txt");
+        printf("[Restore] res: %s\n", res ? "true" : "false");
+    }
+
 
     return 0;
 }

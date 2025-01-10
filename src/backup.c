@@ -3,6 +3,7 @@
 //
 #include "backup.h"
 
+#include <time.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -65,13 +66,16 @@ static GList*       get_all_mount_points        ();
 static char*        read_line                   (FILE* fr);
 static char*        get_mount_point_by_uri      (GFile* file);
 static void         file_path_format            (char* filePath);
+static void         file_name_to_lower          (char* fileName);
 static char*        get_file_content_md5        (const char* path);
 static char*        get_file_path_md5           (const char* path);
 static gboolean     make_backup_dirs_if_needed  (const char* mountPoint);
 static gint         mount_point_compare         (gconstpointer a, gconstpointer b);
 static gboolean     do_backup                   (const char* path, const char* mountPoint);
+static gboolean     do_restore                  (const char* path, const char* mountPoint);
 static gboolean     vfs_backup                  (GFile* file1, BackupFile* file2, GError** error);
 static gboolean     vfs_restore                 (BackupFile* file1, GFile* file2, GError** error);
+static char*        file_get_restore_path       (const char* srcFilePath, const char* extName, guint64 timestamp);
 
 static void         backup_meta_free            (BackupMetaFile* info);
 static gboolean     backup_meta_save            (const BackupMetaFile* info, const char* filePathMD5, const char* mountPoint);
@@ -79,6 +83,38 @@ static gboolean     backup_meta_parse           (BackupMetaFile* info/*in*/, con
 
 
 static GParamSpec* gsBackupFileProperty[PROP_N] = { NULL };
+static const char* gsFileExt[] = {
+    ".tar.gz",
+    ".tar.xz",
+    ".docx",
+    ".xlsx",
+    ".java",
+    ".pptx",
+    ".bz2",
+    ".cpp",
+    ".dxf",
+    ".doc",
+    ".hpp",
+    ".odp",
+    ".odt",
+    ".ods",
+    ".pdf",
+    ".ppt",
+    ".rar",
+    ".txt",
+    ".tmp",
+    ".wps",
+    ".wps",
+    ".xls",
+    ".zip",
+    ".bz",
+    ".cc",
+    ".py",
+    ".xz",
+    ".c",
+    ".h",
+    NULL,
+};
 
 
 GFile* backup_file_new_for_uri (const gchar* uri)
@@ -367,16 +403,40 @@ static gboolean vfs_backup (GFile* file1, BackupFile* file2, GError** error)
     STR_FREE(mountPoint);
 
     return ret;
+    (void) file2;
+    (void) error;
 }
 
 static gboolean vfs_restore (BackupFile* file1, GFile* file2, GError** error)
 {
     g_return_val_if_fail (BACKUP_IS_FILE(file1), FALSE);
 
-    char* path = g_file_get_path(G_FILE(file1));
-    g_return_val_if_fail(path, FALSE);
+    char* path = NULL;                  // free
+    gboolean ret = FALSE;
+    char* mountPoint = NULL;            // free
 
+    do {
+        path = g_file_get_path(G_FILE(file1));
+        BREAK_NULL(path);
 
+        // printf("path: %s\n", path);
+
+        mountPoint = get_mount_point_by_uri(G_FILE(file1));
+        BREAK_NULL(mountPoint);
+
+        // printf("mountPoint: %s\n", mountPoint);
+
+        if (!do_restore(path, mountPoint)) { break; }
+        ret = TRUE;
+    } while (0);
+
+    STR_FREE(path);
+    STR_FREE(mountPoint);
+
+    return ret;
+
+    (void) file2;
+    (void) error;
 }
 
 static GList* get_all_mount_points ()
@@ -485,7 +545,7 @@ static gint mount_point_compare (gconstpointer a, gconstpointer b)
 
 static char* get_mount_point_by_uri (GFile* file)
 {
-    g_return_val_if_fail (G_IS_FILE(file) && !BACKUP_IS_FILE(file), NULL);
+    g_return_val_if_fail (G_IS_FILE(file), NULL);
 
     char* mountPoint = NULL;
     char* path = g_file_get_path(file);
@@ -529,6 +589,127 @@ static gboolean make_backup_dirs_if_needed (const char* mountPoint)
 
     STR_FREE(metaDir);
     STR_FREE(backupDir);
+
+    return ret;
+}
+
+static gboolean do_restore (const char* path, const char* mountPoint)
+{
+    g_return_val_if_fail (path && mountPoint, FALSE);
+
+    GError* error = NULL;               // free
+    gboolean ret = FALSE;
+    char* fileName = NULL;              // free
+    GFile* srcFileF = NULL;             // free
+    GFile* dstFileF = NULL;             // free
+    char* fileExtStr = NULL;            // free
+    char* srcFileStr = NULL;            // free
+    char** extStrArr = NULL;            // free
+    char* filePathMD5 = NULL;           // free
+    char* restoreFileStr = NULL;        // free
+    BackupMetaFile backupMetaFile;      // free
+
+    do {
+        filePathMD5 = get_file_path_md5 (path);
+        BREAK_NULL(filePathMD5);
+
+        if (!backup_meta_parse(&backupMetaFile, path, filePathMD5, mountPoint)) { break; }
+        BREAK_NULL(backupMetaFile.srcFilePath);
+
+        dstFileF = g_file_new_for_path (backupMetaFile.srcFilePath);
+        BREAK_NULL(dstFileF);
+
+        fileName = g_file_get_basename(dstFileF);
+        BREAK_NULL(fileName);
+
+        file_name_to_lower(fileName);
+        for (int i = 0; gsFileExt[i]; ++i) {
+            if (g_str_has_suffix(fileName, gsFileExt[i])) {
+                fileExtStr = g_strdup(gsFileExt[i]);
+                break;
+            }
+        }
+
+        if (!fileExtStr) {
+            extStrArr = g_strsplit(fileName, ".", -1);
+            if (g_strv_length(extStrArr) > 1) {
+                for (int i = 0; extStrArr[i]; ++i) {
+                    if (extStrArr[i] && !extStrArr[i + 1]) {
+                        fileExtStr = g_strdup_printf(".%s", extStrArr[i]);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (backupMetaFile.backupFileCtxMD53) {
+            restoreFileStr = file_get_restore_path (backupMetaFile.srcFilePath, fileExtStr, backupMetaFile.backupFileTimestamp3);
+            g_object_unref(dstFileF);
+
+            srcFileStr = g_strdup_printf("%s/.%s/backup/%s-3", mountPoint, BACKUP_STR, filePathMD5);
+            BREAK_NULL(srcFileStr);
+
+            srcFileF = g_file_new_for_path (srcFileStr);
+            BREAK_NULL(srcFileF);
+
+            dstFileF = g_file_new_for_path (restoreFileStr);
+            BREAK_NULL(dstFileF);
+
+            printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
+
+            ret = g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
+        }
+        else if (backupMetaFile.backupFileCtxMD52) {
+            restoreFileStr = file_get_restore_path (backupMetaFile.srcFilePath, fileExtStr, backupMetaFile.backupFileTimestamp2);
+            g_object_unref(dstFileF);
+
+            srcFileStr = g_strdup_printf("%s/.%s/backup/%s-2", mountPoint, BACKUP_STR, filePathMD5);
+            BREAK_NULL(srcFileStr);
+
+            srcFileF = g_file_new_for_path (srcFileStr);
+            BREAK_NULL(srcFileF);
+
+            dstFileF = g_file_new_for_path (restoreFileStr);
+            BREAK_NULL(dstFileF);
+
+            printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
+
+            ret = g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
+        }
+        else if (backupMetaFile.backupFileCtxMD51) {
+            restoreFileStr = file_get_restore_path (backupMetaFile.srcFilePath, fileExtStr, backupMetaFile.backupFileTimestamp1);
+            g_object_unref(dstFileF);
+
+            srcFileStr = g_strdup_printf("%s/.%s/backup/%s-1", mountPoint, BACKUP_STR, filePathMD5);
+            BREAK_NULL(srcFileStr);
+
+            srcFileF = g_file_new_for_path (srcFileStr);
+            BREAK_NULL(srcFileF);
+
+            dstFileF = g_file_new_for_path (restoreFileStr);
+            BREAK_NULL(dstFileF);
+
+            printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
+
+            ret = g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
+        }
+        else {
+            printf("Not found backup file\n");
+            break;
+        }
+    } while (0);
+
+    STR_FREE(fileName);
+    STR_FREE(fileExtStr);
+    STR_FREE(srcFileStr);
+    STR_FREE(filePathMD5);
+    STR_FREE(restoreFileStr);
+    NOT_NULL_RUN(error, g_error_free);
+    NOT_NULL_RUN(extStrArr, g_strfreev);
+    NOT_NULL_RUN(dstFileF, g_object_unref);
+    NOT_NULL_RUN(srcFileF, g_object_unref);
+
+    backup_meta_free(&backupMetaFile);
 
     return ret;
 }
@@ -848,4 +1029,55 @@ static void file_path_format (char* filePath)
     if ((i - 1 >= 0) && filePath[i - 1] == '/') {
         filePath[i - 1] = '\0';
     }
+}
+
+static void file_name_to_lower (char* fileName)
+{
+    g_return_if_fail (fileName);
+
+    const int step = 'a' - 'A';
+    const int len = strlen (fileName);
+
+    for (int i = 0; i < len; i++) {
+        if (fileName[i] >= 'A' && fileName[i] <= 'Z') {
+            fileName[i] = fileName[i] + step;
+        }
+    }
+}
+
+static char* file_get_restore_path (const char* srcFilePath, const char* extName, guint64 timestamp)
+{
+    g_return_val_if_fail(srcFilePath && timestamp > 0, FALSE);
+
+    char* ret = NULL;
+    char timeBuf[32] = {0};
+    struct tm* curTime = localtime (&timestamp);
+    int nameLen = strlen (srcFilePath) + sizeof (timeBuf) + 2;
+
+    if (extName) {
+        nameLen += strlen (extName);
+    }
+
+    ret = g_malloc0 (nameLen);
+
+    if (curTime) {
+        snprintf(timeBuf, sizeof (timeBuf) - 1, "%04d%02d%02d%02d%02d%02d",
+            1900 + curTime->tm_year, curTime->tm_mon + 1, curTime->tm_mday, curTime->tm_hour, curTime->tm_min, curTime->tm_sec);
+        printf("time: %s\n", timeBuf);
+    }
+
+    memcpy(ret, srcFilePath, strlen (srcFilePath));
+    if (extName && strlen(srcFilePath) > strlen(extName)) {
+        printf("ext: %s\n", extName);
+        const int timeStart = strlen(srcFilePath) - strlen (extName);
+        memcpy(ret + timeStart, "-", 1);
+        memcpy(ret + timeStart + 1, timeBuf, strlen(timeBuf));
+        memcpy(ret + timeStart + 1 + strlen(timeBuf), extName, strlen(extName));
+    }
+    else {
+        memcpy(ret + strlen(srcFilePath), "-", 1);
+        memcpy(ret + strlen(srcFilePath) + 1, timeBuf, strlen(timeBuf));
+    }
+
+    return ret;
 }
