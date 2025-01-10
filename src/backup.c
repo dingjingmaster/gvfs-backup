@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-#define NOT_NULL_RUN(x,f,...)   G_STMT_START if (x) { f(x, ##__VA_ARGS__); } G_STMT_END
 #define BREAK_NULL(x)           G_STMT_START if ((x) == NULL) { break; } G_STMT_END
+#define NOT_NULL_RUN(x,f,...)   G_STMT_START if (x) { f(x, ##__VA_ARGS__); x = NULL; } G_STMT_END
 #define G_OBJ_FREE(x)           G_STMT_START if (G_IS_OBJECT(x)) {g_object_unref (G_OBJECT(x)); x = NULL;} G_STMT_END
 
 typedef enum
@@ -27,6 +27,13 @@ struct _BackupFile
     char*                   fileURI;
 };
 
+struct _BackupFileEnum
+{
+    GFileEnumerator         parent;
+    GList*                  files;
+    GList*                  iter;
+};
+
 typedef struct _BackupMetaFile
 {
     int                     version;
@@ -42,44 +49,63 @@ typedef struct _BackupMetaFile
     guint64                 backupFileTimestamp3;
 } BackupMetaFile;
 
-static void backup_file_init            (BackupFile* self);
-static void backup_file_interface_init  (GFileIface* interface);
-static void backup_file_class_init      (BackupFileClass* klass);
-static void backup_file_get_property    (GObject* object, guint id, GValue* value, GParamSpec* spec);
-static void backup_file_set_property    (GObject* object, guint id, const GValue* value, GParamSpec* spec);
+static void backup_file_init                    (BackupFile* self);
+static void backup_file_interface_init          (GFileIface* interface);
+static void backup_file_class_init              (BackupFileClass* klass);
+static void backup_file_get_property            (GObject* object, guint id, GValue* value, GParamSpec* spec);
+static void backup_file_set_property            (GObject* object, guint id, const GValue* value, GParamSpec* spec);
 
+static void backup_file_enum_init               (BackupFileEnum* self);
+static void backup_file_enum_class_init         (BackupFileEnumClass* klass);
+static GFileEnumerator* vfs_file_enum_children  (GFile* file, const char* attribute, GFileQueryInfoFlags flags, GCancellable* cancel, GError** error);
+
+
+G_DEFINE_TYPE (BackupFileEnum, backup_file_enum, G_TYPE_FILE_ENUMERATOR);
 G_DEFINE_TYPE_WITH_CODE (BackupFile, backup_file, G_TYPE_OBJECT, G_IMPLEMENT_INTERFACE(G_TYPE_FILE, backup_file_interface_init));
 
-static void backup_file_set_path_and_uri(BackupFile* obj, const char* pu);
-static GFile* vfs_lookup                (GVfs* vfs, const char* uri, gpointer data);
-static GFile* vfs_parse_name            (GVfs* vfs, const char* parseName, gpointer data);
 
-static char*        vfs_get_uri                 (GFile* file);
-static char*        vfs_get_path                (GFile* file);
-static char*        vfs_get_uri_schema          (GFile* file);
-static gboolean     vfs_is_native               (GFile* file);
-static GFile*       vfs_dup                     (GFile* file);
-static gboolean     vfs_is_equal                (GFile* file1, GFile* file2);
-static gboolean     vfs_file_backup_restore     (GFile* src, GFile* dest, GFileCopyFlags flags, GCancellable* cancel, GFileProgressCallback progress, gpointer uData, GError** error);
+static void backup_file_set_path_and_uri            (BackupFile* obj, const char* pu);
+static GFile* vfs_lookup                            (GVfs* vfs, const char* uri, gpointer data);
+static GFile* vfs_parse_name                        (GVfs* vfs, const char* parseName, gpointer data);
 
-static GList*       get_all_mount_points        ();
-static char*        read_line                   (FILE* fr);
-static char*        get_mount_point_by_uri      (GFile* file);
-static void         file_path_format            (char* filePath);
-static void         file_name_to_lower          (char* fileName);
-static char*        get_file_content_md5        (const char* path);
-static char*        get_file_path_md5           (const char* path);
-static gboolean     make_backup_dirs_if_needed  (const char* mountPoint);
-static gint         mount_point_compare         (gconstpointer a, gconstpointer b);
-static gboolean     do_backup                   (const char* path, const char* mountPoint);
-static gboolean     do_restore                  (const char* path, const char* mountPoint);
-static gboolean     vfs_backup                  (GFile* file1, BackupFile* file2, GError** error);
-static gboolean     vfs_restore                 (BackupFile* file1, GFile* file2, GError** error);
-static char*        file_get_restore_path       (const char* srcFilePath, const char* extName, guint64 timestamp);
+static char*        vfs_get_uri                     (GFile* file);
+static char*        vfs_get_path                    (GFile* file);
+static char*        vfs_get_uri_schema              (GFile* file);
+static char*        vfs_get_basename                (GFile* file);
+static gboolean     vfs_is_native                   (GFile* file);
+static GFile*       vfs_dup                         (GFile* file);
+static GFile*       vfs_get_parent                  (GFile* file);
+static guint        vfs_hash                        (GFile* file);
+static gboolean     vfs_is_equal                    (GFile* file, GFile* file2);
+static gboolean     vfs_has_schema                  (GFile* file, const char* uriSchema);
+static GFile*       vfs_resolve_relative_path       (GFile* file, const char* relativePath);
+static GFile*       vfs_get_child_for_display_name  (GFile* file, const char* displayName, GError** error);
+static GFileInfo*   vfs_file_query_fs_info          (GFile* file, const char* attr, GCancellable* cancel, GError** error);
+static GFileInfo*   vfs_file_query_info             (GFile* file, const char* attr, GFileQueryInfoFlags flags, GCancellable* cancel, GError** error);
+static gboolean     vfs_file_backup_restore         (GFile* src, GFile* dest, GFileCopyFlags flags, GCancellable* cancel, GFileProgressCallback progress, gpointer uData, GError** error);
 
-static void         backup_meta_free            (BackupMetaFile* info);
-static gboolean     backup_meta_save            (const BackupMetaFile* info, const char* filePathMD5, const char* mountPoint);
-static gboolean     backup_meta_parse           (BackupMetaFile* info/*in*/, const char* filePath, const char* filePathMD5, const char* mountPoint);
+static GFileInfo*   vfs_file_enum_next_file         (GFileEnumerator *enumerator, GCancellable *cancellable, GError **error);
+static gboolean     vfs_file_enum_close             (GFileEnumerator *enumerator, GCancellable *cancellable, GError **error);
+
+static GList*       get_all_mount_points            ();
+static char*        read_line                       (FILE* fr);
+static char*        get_mount_point_by_uri          (GFile* file);
+static void         file_path_format                (char* filePath);
+static void         file_name_to_lower              (char* fileName);
+static char*        get_file_content_md5            (const char* path);
+static char*        get_file_path_md5               (const char* path);
+static gboolean     make_backup_dirs_if_needed      (const char* mountPoint);
+static gint         mount_point_compare             (gconstpointer a, gconstpointer b);
+static gboolean     do_backup                       (const char* path, const char* mountPoint);
+static gboolean     do_restore                      (const char* path, const char* mountPoint);
+static gboolean     vfs_backup                      (GFile* file1, BackupFile* file2, GError** error);
+static gboolean     vfs_restore                     (BackupFile* file1, GFile* file2, GError** error);
+static char*        file_get_restore_path           (const char* srcFilePath, const char* extName, guint64 timestamp);
+
+static void         backup_meta_free                (BackupMetaFile* info);
+static gboolean     backup_meta_parse_file_path     (BackupMetaFile* info/*in*/, const char* filePath);
+static gboolean     backup_meta_save                (const BackupMetaFile* info, const char* filePathMD5, const char* mountPoint);
+static gboolean     backup_meta_parse               (BackupMetaFile* info/*in*/, const char* filePath, const char* filePathMD5, const char* mountPoint);
 
 
 static GParamSpec* gsBackupFileProperty[PROP_N] = { NULL };
@@ -194,6 +220,59 @@ static void backup_file_init (BackupFile* self)
 
 }
 
+static void backup_file_enum_init (BackupFileEnum* self)
+{
+    g_return_if_fail(BACKUP_IS_FILE_ENUM(self));
+
+    char* path = NULL;
+    self->files = NULL;
+    GFile* file = NULL;
+    GFile* iterFile= NULL;
+    GFileEnumerator* fe = NULL;
+    // GFileInfo* iterFileInfo = NULL;
+    GList* mp = get_all_mount_points();
+    for (GList* itr = mp; itr; itr = itr->next) {
+        NOT_NULL_RUN(path, g_free);
+        path = g_strdup_printf("%s/.%s/meta", (char*) itr->data, BACKUP_STR);
+        if (path) {
+            NOT_NULL_RUN(file, g_object_unref);
+            file = g_file_new_for_path (path);
+            if (G_IS_FILE(file)) {
+                if (g_file_query_exists(file, NULL)) {
+                    NOT_NULL_RUN(fe, g_object_unref);
+                    fe = g_file_enumerate_children(file, "*", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, NULL);
+                    if (G_IS_FILE_ENUMERATOR(fe)) {
+                        do {
+                            g_file_enumerator_iterate(fe, NULL, &iterFile, NULL, NULL);
+                            if (NULL == iterFile) {
+                                break;
+                            }
+                            char* dir = g_file_get_path(iterFile);
+                            BackupMetaFile bf;
+                            memset(&bf, 0, sizeof(BackupMetaFile));
+                            if (backup_meta_parse_file_path(&bf, dir)) {
+                                if (bf.srcFilePath) {
+                                    self->files = g_list_append (self->files, g_strdup(bf.srcFilePath));
+                                    printf("==>%s\n", bf.srcFilePath);
+                                }
+                            }
+                            STR_FREE(dir);
+                            backup_meta_free(&bf);
+                        } while (TRUE);
+                    }
+                }
+            }
+        }
+    }
+    NOT_NULL_RUN(path, g_free);
+    NOT_NULL_RUN(fe, g_object_unref);
+    NOT_NULL_RUN(file, g_object_unref);
+    NOT_NULL_RUN(iterFile, g_object_unref);
+    NOT_NULL_RUN(mp, g_list_free_full, g_free);
+
+    self->iter = self->files;
+}
+
 static void backup_file_class_init (BackupFileClass* klass)
 {
     GObjectClass* objClass = G_OBJECT_CLASS (klass);
@@ -207,6 +286,17 @@ static void backup_file_class_init (BackupFileClass* klass)
     g_object_class_install_properties(objClass, PROP_N, gsBackupFileProperty);
 
     backup_file_register();
+}
+
+static void backup_file_enum_class_init (BackupFileEnumClass* klass)
+{
+    g_return_if_fail (BACKUP_IS_FILE_ENUM_CLASS(klass));
+
+    GObjectClass* objClass = G_OBJECT_CLASS (klass);
+    GFileEnumeratorClass* enumerator = G_FILE_ENUMERATOR_CLASS (objClass);
+
+    enumerator->next_file       = vfs_file_enum_next_file;
+    enumerator->close_fn        = vfs_file_enum_close;
 }
 
 static void backup_file_set_property (GObject* object, guint id, const GValue* value, GParamSpec* spec)
@@ -284,14 +374,24 @@ static void backup_file_set_path_and_uri(BackupFile* obj, const char* pu)
 
 static void backup_file_interface_init (GFileIface* interface)
 {
-    interface->dup                  = vfs_dup;
-    interface->get_uri              = vfs_get_uri;
-    interface->get_path             = vfs_get_path;
-    interface->equal                = vfs_is_equal;
-    interface->is_native            = vfs_is_native;
-    interface->get_uri_scheme       = vfs_get_uri_schema;
-    interface->move                 = vfs_file_backup_restore;
-    interface->copy                 = vfs_file_backup_restore;
+    interface->dup                          = vfs_dup;
+    interface->hash                         = vfs_hash;
+    interface->get_uri                      = vfs_get_uri;
+    interface->get_path                     = vfs_get_path;
+    interface->equal                        = vfs_is_equal;
+    interface->is_native                    = vfs_is_native;
+    interface->get_parent                   = vfs_get_parent;
+    interface->has_uri_scheme               = vfs_has_schema;
+    interface->get_basename                 = vfs_get_basename;
+    interface->get_uri_scheme               = vfs_get_uri_schema;
+    interface->query_info                   = vfs_file_query_info;
+    interface->enumerate_children           = vfs_file_enum_children;
+    interface->query_filesystem_info        = vfs_file_query_fs_info;
+    interface->move                         = vfs_file_backup_restore;
+    interface->copy                         = vfs_file_backup_restore;
+    interface->resolve_relative_path        = vfs_resolve_relative_path;
+    interface->get_child_for_display_name   = vfs_get_child_for_display_name;
+    interface->supports_thread_contexts     = FALSE;
 }
 
 static GFile* vfs_lookup (GVfs* vfs, const char* uri, gpointer data)
@@ -306,8 +406,34 @@ static GFile* vfs_parse_name (GVfs* vfs, const char* parseName, gpointer data)
     (void) data;
 }
 
+static char* vfs_get_basename (GFile* file)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
+    char** strArr = NULL;
+    char* basename = NULL;
+    char* path = vfs_get_path(file);
+    if (path) {
+        strArr = g_strsplit(path, "/", -1);
+        if (g_strv_length(strArr) > 1) {
+            for (int i = 0; strArr[i]; i++) {
+                if (strArr[i] && (strArr[i + 1] == NULL)) {
+                    basename = g_strdup(strArr[i]);
+                }
+            }
+        }
+    }
+
+    STR_FREE(path);
+    NOT_NULL_RUN(strArr, g_strfreev);
+
+    return basename;
+}
+
 static char* vfs_get_uri (GFile* file)
 {
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
     GValue value = G_VALUE_INIT;
     g_value_init (&value, G_TYPE_STRING);
 
@@ -318,12 +444,16 @@ static char* vfs_get_uri (GFile* file)
 
 static char* vfs_get_path (GFile* file)
 {
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
     GValue value = G_VALUE_INIT;
     g_value_init (&value, G_TYPE_STRING);
 
     g_object_get_property (G_OBJECT (file), "s-path", &value);
 
-    return g_value_dup_string (&value);
+    char* path = g_value_dup_string (&value);
+
+    return path;
 }
 
 static char* vfs_get_uri_schema (GFile* file)
@@ -340,21 +470,82 @@ static gboolean vfs_is_native (GFile* file)
     return TRUE;
 }
 
-static gboolean vfs_is_equal (GFile* file1, GFile* file2)
+static gboolean vfs_is_equal (GFile* file, GFile* file2)
 {
-    g_return_val_if_fail (BACKUP_IS_FILE(file1) && BACKUP_IS_FILE(file2), FALSE);
+    g_return_val_if_fail (BACKUP_IS_FILE(file) && BACKUP_IS_FILE(file2), FALSE);
 
-    const BackupFile* s1 = BACKUP_FILE (file1);
+    const BackupFile* s1 = BACKUP_FILE (file);
     const BackupFile* s2 = BACKUP_FILE (file2);
 
     return (0 == g_strcmp0 (s1->fileURI, s2->fileURI));
+}
+
+static GFile* vfs_resolve_relative_path (GFile* file, const char* relativePath)
+{
+    g_return_val_if_fail (BACKUP_IS_FILE(file), NULL);
+
+    char* pp1 = NULL;
+    char** strArr = NULL;
+    GFile* resFile = NULL;
+    char* path = g_file_get_path (file);
+
+    if (0 == g_strcmp0(path, "") || 0 == g_strcmp0(path, "/")) {
+        strArr = g_strsplit(relativePath, "{]", -1);
+        if (strArr) {
+            pp1 = g_strjoinv("/", strArr);
+            if (pp1) {
+                resFile = backup_file_new_for_path(pp1);
+            }
+        }
+    }
+
+    STR_FREE(pp1);
+    STR_FREE(path);
+    NOT_NULL_RUN(strArr, g_strfreev);
+
+    return resFile;
 }
 
 static GFile* vfs_dup (GFile* file)
 {
     g_return_val_if_fail (BACKUP_IS_FILE(file), NULL);
 
-    return backup_file_new_for_uri(BACKUP_FILE(file)->fileURI);
+    GFile* f = backup_file_new_for_uri(BACKUP_FILE(file)->fileURI);
+
+    return f;
+}
+
+static GFile* vfs_get_parent (GFile* file)
+{
+    g_return_val_if_fail (BACKUP_IS_FILE(file), NULL);
+
+    GFile* f = backup_file_new_for_path("/");
+    return f;
+    (void) file;
+}
+
+static GFile* vfs_get_child_for_display_name (GFile* file, const char* displayName, GError** error)
+{
+    g_return_val_if_fail (BACKUP_IS_FILE(file), NULL);
+
+    return NULL;
+    (void) file;
+}
+
+static guint vfs_hash (GFile* file)
+{
+    guint hash = 0;
+
+    g_return_val_if_fail (BACKUP_IS_FILE(file), hash);
+
+    char* uri = vfs_get_uri (file);
+    if (uri) {
+        hash = g_str_hash(uri);
+    }
+
+    STR_FREE (uri);
+
+    return hash;
 }
 
 static gboolean vfs_file_backup_restore (GFile* src, GFile* dest, GFileCopyFlags flags, GCancellable* cancel, GFileProgressCallback progress, gpointer uData, GError** error)
@@ -419,12 +610,8 @@ static gboolean vfs_restore (BackupFile* file1, GFile* file2, GError** error)
         path = g_file_get_path(G_FILE(file1));
         BREAK_NULL(path);
 
-        // printf("path: %s\n", path);
-
         mountPoint = get_mount_point_by_uri(G_FILE(file1));
         BREAK_NULL(mountPoint);
-
-        // printf("mountPoint: %s\n", mountPoint);
 
         if (!do_restore(path, mountPoint)) { break; }
         ret = TRUE;
@@ -507,7 +694,7 @@ static char* read_line (FILE* fr)
 
     while (TRUE) {
         memset(buf, 0, sizeof(buf));
-        int size = fread(buf, 1, sizeof(buf) - 1, fr);
+        int size = (int) fread(buf, 1, sizeof(buf) - 1, fr);
         if (size <= 0) {
             break;
         }
@@ -561,7 +748,7 @@ static char* get_mount_point_by_uri (GFile* file)
     }
 
     STR_FREE(path);
-    g_list_free_full(list, g_free);
+    NOT_NULL_RUN(list, g_list_free_full, g_free);
 
     return mountPoint;
 }
@@ -655,8 +842,6 @@ static gboolean do_restore (const char* path, const char* mountPoint)
             dstFileF = g_file_new_for_path (restoreFileStr);
             BREAK_NULL(dstFileF);
 
-            // printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
-
             g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             ret = (0 == access(restoreFileStr, F_OK));
         }
@@ -673,8 +858,6 @@ static gboolean do_restore (const char* path, const char* mountPoint)
             dstFileF = g_file_new_for_path (restoreFileStr);
             BREAK_NULL(dstFileF);
 
-            // printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
-
             g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             ret = (0 == access(restoreFileStr, F_OK));
         }
@@ -690,8 +873,6 @@ static gboolean do_restore (const char* path, const char* mountPoint)
 
             dstFileF = g_file_new_for_path (restoreFileStr);
             BREAK_NULL(dstFileF);
-
-            // printf("src: %s -- dst: %s\n", srcFileStr, restoreFileStr);
 
             g_file_copy(srcFileF, dstFileF, G_FILE_COPY_BACKUP | G_FILE_COPY_ALL_METADATA, NULL, NULL, NULL, &error);
             ret = (0 == access(restoreFileStr, F_OK));
@@ -898,6 +1079,73 @@ static char* get_file_path_md5 (const char* path)
     return res;
 }
 
+static gboolean backup_meta_parse_file_path (BackupMetaFile* info/*in*/, const char* filePath)
+{
+    g_return_val_if_fail (info && filePath && '/' == filePath[0], FALSE);
+
+    memset(info, 0, sizeof(BackupMetaFile));
+
+    FILE* metaFr = NULL;
+    gboolean ret = FALSE;
+    char** strArr = NULL;               // free
+    char* metaFileCtx = NULL;           // free
+
+    do {
+        if (0 != access(filePath, F_OK)) {
+            ret = TRUE;
+            break;
+        }
+
+        struct stat statBuf;
+        guint64 backupFileSize = 0;
+        if (!stat(filePath, &statBuf)) {
+            backupFileSize = statBuf.st_size + 1;
+        }
+        if (backupFileSize <= 0) { break; }
+
+        metaFileCtx = g_malloc0(backupFileSize);
+        BREAK_NULL(metaFileCtx);
+
+        metaFr = fopen(filePath, "r");
+        BREAK_NULL(metaFr);
+
+        if (fread(metaFileCtx, 1, backupFileSize, metaFr) < 0) { break; }
+
+        fclose(metaFr);
+        metaFr = NULL;
+
+        strArr = g_strsplit(metaFileCtx, "|", -1);
+        if (strArr) {
+            const char* version = strArr[0];
+            if (version) {
+                const int verInt = (int) strtol(version, NULL, 10);
+                info->version = verInt;
+                if (1 == verInt) {
+                    if (g_strv_length(strArr) != 9) {
+                        break;
+                    }
+                    if (strArr[1]) { info->srcFilePath          = g_strdup(strArr[1]); }
+                    if (strArr[2]) { info->srcFilePathMD5       = g_strdup(strArr[2]); }
+
+                    if (strArr[3] && strlen(strArr[3]) > 0) { info->backupFileCtxMD51    = g_strdup(strArr[3]); }
+                    if (strArr[4] && strlen(strArr[4]) > 0) { info->backupFileTimestamp1 = strtoll(strArr[4], NULL, 10); }
+                    if (strArr[5] && strlen(strArr[5]) > 0) { info->backupFileCtxMD52    = g_strdup(strArr[5]); }
+                    if (strArr[6] && strlen(strArr[6]) > 0) { info->backupFileTimestamp2 = strtoll(strArr[6], NULL, 10); }
+                    if (strArr[7] && strlen(strArr[7]) > 0) { info->backupFileCtxMD53    = g_strdup(strArr[7]); }
+                    if (strArr[8] && strlen(strArr[8]) > 0) { info->backupFileTimestamp3 = strtoll(strArr[8], NULL, 10); }
+                }
+            }
+        }
+        ret = TRUE;
+    } while (FALSE);
+
+    STR_FREE(metaFileCtx);
+    NOT_NULL_RUN(strArr, g_strfreev);
+    if (metaFr) { fclose(metaFr); metaFr = NULL; }
+
+    return ret;
+}
+
 static gboolean backup_meta_parse (BackupMetaFile* info, const char* filePath, const char* filePathMD5, const char* mountPoint)
 {
     g_return_val_if_fail (info && filePath && filePathMD5 && mountPoint, FALSE);
@@ -924,6 +1172,7 @@ static gboolean backup_meta_parse (BackupMetaFile* info, const char* filePath, c
         if (!stat(metaFile, &statBuf)) {
             backupFileSize = statBuf.st_size + 1;
         }
+        if (backupFileSize <= 0) { break; }
 
         metaFileCtx = g_malloc0(backupFileSize);
         BREAK_NULL(metaFileCtx);
@@ -944,7 +1193,6 @@ static gboolean backup_meta_parse (BackupMetaFile* info, const char* filePath, c
                 info->version = verInt;
                 if (1 == verInt) {
                     if (g_strv_length(strArr) != 9) {
-                        // printf("[PARSE] is not 9\n");
                         break;
                     }
                     if (strArr[1]) { info->srcFilePath          = g_strdup(strArr[1]); }
@@ -1066,12 +1314,10 @@ static char* file_get_restore_path (const char* srcFilePath, const char* extName
     if (curTime) {
         snprintf(timeBuf, sizeof (timeBuf) - 1, "%04d%02d%02d%02d%02d%02d",
             1900 + curTime->tm_year, curTime->tm_mon + 1, curTime->tm_mday, curTime->tm_hour, curTime->tm_min, curTime->tm_sec);
-        // printf("time: %s\n", timeBuf);
     }
 
     memcpy(ret, srcFilePath, strlen (srcFilePath));
     if (extName && strlen(srcFilePath) > strlen(extName)) {
-        // printf("ext: %s\n", extName);
         const int timeStart = strlen(srcFilePath) - strlen (extName);
         memcpy(ret + timeStart, "-", 1);
         memcpy(ret + timeStart + 1, timeBuf, strlen(timeBuf));
@@ -1083,4 +1329,147 @@ static char* file_get_restore_path (const char* srcFilePath, const char* extName
     }
 
     return ret;
+}
+
+static GFileInfo* vfs_file_enum_next_file (GFileEnumerator *enumerator, GCancellable *cancellable, GError **error)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE_ENUM(enumerator), NULL);
+
+    BackupFileEnum* eb = BACKUP_FILE_ENUM(enumerator);
+
+    if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+        if (error) {
+            *error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
+        }
+        return NULL;
+    }
+
+    char* uri = NULL;
+    GFile* ff = NULL;
+    GFileInfo* info = NULL;
+    if (eb->iter && eb->iter->data) {
+        const char* f = eb->files->data;
+        if (f && '/' == f[0]) {
+            uri = g_strdup_printf ("%s://%s", BACKUP_STR, (char*) eb->iter->data);
+            if (uri) {
+                ff = g_file_new_for_uri (uri);
+                info = g_file_query_info(ff, "standard::*", G_FILE_QUERY_INFO_NONE, cancellable, error);
+            }
+        }
+    }
+
+    if (eb->iter) {
+        eb->iter = eb->iter->next;
+    }
+    else {
+        NOT_NULL_RUN(info, g_object_unref);
+    }
+
+    STR_FREE(uri);
+    NOT_NULL_RUN(ff, g_object_unref);
+
+    return info;
+}
+
+GFileEnumerator* vfs_file_enum_children (GFile* file, const char* attribute, GFileQueryInfoFlags flags, GCancellable* cancel, GError** error)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
+    GFileEnumerator* e = G_FILE_ENUMERATOR(g_object_new(BACKUP_FILE_ENUM_TYPE, "container", file, NULL));
+
+    return e;
+
+    (void) flags;
+    (void) error;
+    (void) cancel;
+    (void) attribute;
+}
+
+static gboolean vfs_file_enum_close (GFileEnumerator *enumerator, GCancellable *cancellable, GError **error)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE_ENUM(enumerator), FALSE);
+
+    BackupFileEnum* e = BACKUP_FILE_ENUM(enumerator);
+
+    e->iter = NULL;
+    NOT_NULL_RUN(e->files, g_list_free_full, g_free);
+
+    return TRUE;
+
+    (void) error;
+    (void) cancellable;
+}
+
+static GFileInfo* vfs_file_query_fs_info (GFile* file, const char* attr, GCancellable* cancel, GError** error)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
+    GFile* f = NULL;
+    GFileInfo* info = NULL;
+    f = g_file_new_for_path ("/");
+
+    if (G_IS_FILE(f)) {
+        info = g_file_query_info (f, attr, G_FILE_QUERY_INFO_NONE, cancel, error);
+    }
+
+
+    return info;
+}
+
+static GFileInfo* vfs_file_query_info (GFile* file, const char* attr, GFileQueryInfoFlags flags, GCancellable* cancel, GError** error)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE(file), NULL);
+
+    char** strArr = NULL;
+    char* baseName = NULL;
+    GFileInfo* info = NULL;
+    char* uri = g_file_get_uri(file);
+    // printf("[URL]: %s\n", uri);
+    char* path = g_file_get_path(file);
+    if (path) {
+        // printf("[PATH]: %s, uri: %s\n", path, uri);
+        info = g_file_info_new();
+
+        strArr = g_strsplit(path, "/", -1);
+        baseName = g_strjoinv("{]", strArr);
+
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_VIRTUAL, TRUE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN, FALSE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP, FALSE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK, FALSE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_VOLATILE, FALSE);
+
+        g_file_info_set_attribute_uint32 (info, G_FILE_ATTRIBUTE_STANDARD_TYPE, G_FILE_TYPE_REGULAR);
+
+        g_file_info_set_attribute_string (info, G_FILE_ATTRIBUTE_STANDARD_TARGET_URI, uri);
+
+        g_file_info_set_attribute_byte_string(info, G_FILE_ATTRIBUTE_STANDARD_NAME, baseName);
+        g_file_info_set_attribute_byte_string(info, G_FILE_ATTRIBUTE_STANDARD_EDIT_NAME, baseName);
+        g_file_info_set_attribute_byte_string(info, G_FILE_ATTRIBUTE_STANDARD_COPY_NAME, baseName);
+        g_file_info_set_attribute_byte_string(info, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, baseName);
+
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE, TRUE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH, FALSE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE, FALSE);
+        g_file_info_set_attribute_boolean (info, G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME, FALSE);
+    }
+
+    STR_FREE(uri);
+    STR_FREE(path);
+    STR_FREE(baseName);
+    NOT_NULL_RUN(strArr, g_strfreev);
+
+    return info;
+
+    (void) attr;
+    (void) flags;
+    (void) error;
+    (void) cancel;
+}
+
+static gboolean vfs_has_schema (GFile* file, const char* uriSchema)
+{
+    g_return_val_if_fail(BACKUP_IS_FILE(file) && uriSchema, FALSE);
+
+    return g_str_has_prefix(uriSchema, BACKUP_STR);
 }

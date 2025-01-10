@@ -19,9 +19,19 @@ G_BEGIN_DECLS
 #define BACKUP_FILE(k)                                  (G_TYPE_CHECK_INSTANCE_CAST((k), BACKUP_FILE_TYPE, BackupFile))
 #define BACKUP_FILE_GET_CLASS(k)                        (G_TYPE_INSTANCE_GET_CLASS((k), BACKUP_FILE_TYPE, BackupFileClass))
 
+#define BACKUP_FILE_ENUM_TYPE                           (backup_file_enum_get_type())
+#define BACKUP_IS_FILE_ENUM_CLASS(k)                    (G_TYPE_CHECK_CLASS_TYPE((k), BACKUP_FILE_ENUM_TYPE))
+#define BACKUP_IS_FILE_ENUM(k)                          (G_TYPE_CHECK_INSTANCE_TYPE((k), BACKUP_FILE_ENUM_TYPE))
+#define BACKUP_FILE_ENUM_CLASS(k)                       (G_TYPE_CHECK_CLASS_CAST((k), BACKUP_FILE_ENUM_TYPE, BackupFileEnumClass))
+#define BACKUP_FILE_ENUM(k)                             (G_TYPE_CHECK_INSTANCE_CAST((k), BACKUP_FILE_ENUM_TYPE, BackupFileEnum))
+#define BACKUP_FILE_ENUM_GET_CLASS(k)                   (G_TYPE_INSTANCE_GET_CLASS((k), BACKUP_FILE_ENUM_TYPE, BackupFileEnumClass))
+
 G_DECLARE_FINAL_TYPE(BackupFile, backup_file, BackupFile, BACKUP_FILE_TYPE, GObject)
+G_DECLARE_FINAL_TYPE(BackupFileEnum, backup_file_enum, BackupFileEnum, BACKUP_FILE_ENUM_TYPE, GFileEnumerator)
+
 
 GType                   backup_file_get_type            (void) G_GNUC_CONST;
+GType                   backup_file_enum_get_type       (void) G_GNUC_CONST;
 GFile*                  backup_file_new_for_path        (const gchar* path);
 
 /**
@@ -39,8 +49,6 @@ gboolean                backup_file_restore             (GFile* self);
 gboolean                backup_file_restore_by_abspath  (const char* path);
 
 void                    backup_file_register            ();
-
-
 
 G_END_DECLS
 
