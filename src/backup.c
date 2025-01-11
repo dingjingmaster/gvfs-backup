@@ -7,7 +7,8 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-#define BREAK_NULL(x)           G_STMT_START if ((x) == NULL) { break; } G_STMT_END
+#define BREAK_IF_FAIL(x)        if (!(x)) { break; }
+#define BREAK_NULL(x)           if ((x) == NULL) { break; }
 #define NOT_NULL_RUN(x,f,...)   G_STMT_START if (x) { f(x, ##__VA_ARGS__); x = NULL; } G_STMT_END
 #define G_OBJ_FREE(x)           G_STMT_START if (G_IS_OBJECT(x)) {g_object_unref (G_OBJECT(x)); x = NULL;} G_STMT_END
 
@@ -830,6 +831,7 @@ static gboolean do_restore (const char* path, const char* mountPoint)
         BREAK_NULL(fileName);
 
         file_name_to_lower(fileName);
+        BREAK_IF_FAIL(strlen(fileName) > 0);
         for (int i = 0; gsFileExt[i]; ++i) {
             if (g_str_has_suffix(fileName, gsFileExt[i])) {
                 fileExtStr = g_strdup(gsFileExt[i]);
