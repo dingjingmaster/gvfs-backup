@@ -143,15 +143,17 @@ int main (int argc, char* argv[])
         // enumerator
         GError* error = NULL;
         GFile* f = NULL;
+        GFileInfo* fi = NULL;
         GFileEnumerator* fs = NULL;
         GFile* file1 = backup_file_new_for_path("/");
         if (G_IS_FILE(file1)) {
             fs = g_file_enumerate_children (file1, "*", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, &error);
             if (G_IS_FILE_ENUMERATOR(fs)) {
                 do {
-                    // if (NULL != f) { g_object_unref (f); f = NULL; }
-                    // if (NULL != fi) { g_object_unref (fi); fi = NULL; }
-                    g_file_enumerator_iterate (fs, NULL, &f, NULL, NULL);
+                    if (NULL != f) { g_object_unref (f); f = NULL; }
+                    if (NULL != fi) { g_object_unref (fi); fi = NULL; }
+                    // g_file_enumerator_iterate (fs, NULL, &f, NULL, NULL);
+                    fi = g_file_enumerator_next_file(fs, NULL, NULL);
                     if (NULL != error) {
                         printf ("error:%s\n", error->message ? error->message : "NULL");
                         g_error_free(error);
@@ -159,9 +161,16 @@ int main (int argc, char* argv[])
                         continue;
                     }
 
-                    if (NULL == f) {
+                    if (NULL == fi) {
                         printf ("结束迭代!文件总数\n");
                         break;
+                    }
+
+                    char* uriT = g_file_info_get_attribute_as_string(fi, G_FILE_ATTRIBUTE_STANDARD_TARGET_URI);
+                    if (uriT) {
+                        f = g_file_new_for_uri (uriT);
+                        g_free(uriT);
+                        uriT = NULL;
                     }
 
                     printf ("============================= 开始 ===============================\n");
@@ -173,7 +182,7 @@ int main (int argc, char* argv[])
         }
 
         if (NULL != f)      { g_object_unref (f); f = NULL; }
-        // if (NULL != fi)     { g_object_unref (fi); fi = NULL; }
+        if (NULL != fi)     { g_object_unref (fi); fi = NULL; }
         if (NULL != fs)     { g_object_unref (fs); fs = NULL; }
         if (NULL != error)  { g_error_free (error); error = NULL; }
         if (NULL != file1)  { g_object_unref (file1); file1 = NULL; }

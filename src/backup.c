@@ -239,7 +239,7 @@ static void backup_file_enum_init (BackupFileEnum* self)
     GFile* file = NULL;
     GFile* iterFile= NULL;
     GFileEnumerator* fe = NULL;
-    // GFileInfo* iterFileInfo = NULL;
+    GFileInfo* iterFileInfo = NULL;
     GList* mp = get_all_mount_points();
     for (GList* itr = mp; itr; itr = itr->next) {
         NOT_NULL_RUN(path, g_free);
@@ -253,17 +253,31 @@ static void backup_file_enum_init (BackupFileEnum* self)
                     fe = g_file_enumerate_children(file, "*", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, NULL);
                     if (G_IS_FILE_ENUMERATOR(fe)) {
                         do {
-                            g_file_enumerator_iterate(fe, NULL, &iterFile, NULL, NULL);
-                            if (NULL == iterFile) {
+                            // g_file_enumerator_iterate(fe, NULL, &iterFile, NULL, NULL);
+                            NOT_NULL_RUN(iterFile, g_object_unref);
+                            NOT_NULL_RUN(iterFileInfo, g_object_unref);
+                            iterFileInfo = g_file_enumerator_next_file(fe, NULL, NULL);
+                            if (NULL == iterFileInfo) {
                                 break;
                             }
+
+                            char* uriT = g_file_info_get_attribute_as_string(iterFileInfo, G_FILE_ATTRIBUTE_STANDARD_TARGET_URI);
+                            BREAK_NULL(uriT);
+
+                            iterFile = g_file_new_for_uri (uriT);
+                            STR_FREE(uriT);
+                            BREAK_NULL(iterFile);
+
                             char* dir = g_file_get_path(iterFile);
+                            NOT_NULL_RUN(dir, g_object_unref);
+                            BREAK_NULL(dir);
+
                             BackupMetaFile bf;
                             memset(&bf, 0, sizeof(BackupMetaFile));
                             if (backup_meta_parse_file_path(&bf, dir)) {
                                 if (bf.srcFilePath) {
                                     self->files = g_list_append (self->files, g_strdup(bf.srcFilePath));
-                                    printf("==>%s\n", bf.srcFilePath);
+                                    // printf("==>%s\n", bf.srcFilePath);
                                 }
                             }
                             STR_FREE(dir);
@@ -278,6 +292,7 @@ static void backup_file_enum_init (BackupFileEnum* self)
     NOT_NULL_RUN(fe, g_object_unref);
     NOT_NULL_RUN(file, g_object_unref);
     NOT_NULL_RUN(iterFile, g_object_unref);
+    NOT_NULL_RUN(iterFileInfo, g_object_unref);
     NOT_NULL_RUN(mp, g_list_free_full, g_free);
 
     self->iter = self->files;
@@ -1447,10 +1462,8 @@ static GFileInfo* vfs_file_query_info (GFile* file, const char* attr, GFileQuery
     char* baseName = NULL;
     GFileInfo* info = NULL;
     char* uri = g_file_get_uri(file);
-    // printf("[URL]: %s\n", uri);
     char* path = g_file_get_path(file);
     if (path) {
-        // printf("[PATH]: %s, uri: %s\n", path, uri);
         info = g_file_info_new();
 
         strArr = g_strsplit(path, "/", -1);
