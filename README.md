@@ -11,7 +11,7 @@ File backup is implemented based on gvfs, and the latest three versions of the s
 
 ## Depend on
 
-- glib-2.0
+- glib-2.0 (>=2.50)
 
 ## compile
 
