@@ -163,9 +163,13 @@ GFile* backup_file_new_for_path (const gchar* path)
 
 gboolean backup_file_backup(GFile* self)
 {
-    g_return_val_if_fail (!BACKUP_IS_FILE(self), FALSE);
+    g_return_val_if_fail (G_IS_FILE(self) && !BACKUP_IS_FILE(self), FALSE);
 
-    return vfs_backup(self, NULL, NULL);
+    GFile* bf = backup_file_new_for_path("/");
+    const gboolean ret = g_file_copy(self, bf, 0, NULL, NULL, NULL, NULL);
+    NOT_NULL_RUN(bf, g_object_unref);
+
+    return ret;
 }
 
 gboolean backup_file_backup_by_abspath(const char* path)
@@ -175,10 +179,11 @@ gboolean backup_file_backup_by_abspath(const char* path)
     gboolean result = FALSE;
 
     GFile* file = g_file_new_for_path (path);
-    if (G_IS_FILE(file)) {
-        result = backup_file_backup(file);
-        g_object_unref (file);
-    }
+    GFile* bf = backup_file_new_for_path("/");
+    result = g_file_copy(file, bf, 0, NULL, NULL, NULL, NULL);
+
+    NOT_NULL_RUN(bf, g_object_unref);
+    NOT_NULL_RUN(file, g_object_unref);
 
     return result;
 }
@@ -187,20 +192,24 @@ gboolean backup_file_restore(GFile* self)
 {
     g_return_val_if_fail (BACKUP_IS_FILE(self), FALSE);
 
-    return vfs_restore(BACKUP_FILE(self), NULL, NULL);
+    char* path = g_file_get_path(self);
+    GFile* file = g_file_new_for_path (path);
+    const gboolean result = g_file_copy(self, file, 0, NULL, NULL, NULL, NULL);
+    STR_FREE(path);
+    NOT_NULL_RUN(file, g_object_unref);
+
+    return result;
 }
 
 gboolean backup_file_restore_by_abspath(const char* path)
 {
     g_return_val_if_fail (path && '/' == path[0], FALSE);
 
-    gboolean result = FALSE;
-
     GFile* file = backup_file_new_for_path (path);
-    if (BACKUP_IS_FILE (file)) {
-        result = backup_file_restore(file);
-        g_object_unref (file);
-    }
+    GFile* bf = g_file_new_for_path(path);
+    const gboolean result = g_file_copy(file, bf, 0, NULL, NULL, NULL, NULL);
+    NOT_NULL_RUN(bf, g_object_unref);
+    NOT_NULL_RUN(file, g_object_unref);
 
     return result;
 }
@@ -572,7 +581,8 @@ static gboolean vfs_file_backup_restore (GFile* src, GFile* dest, GFileCopyFlags
 
 static gboolean vfs_backup (GFile* file1, BackupFile* file2, GError** error)
 {
-    g_return_val_if_fail (G_IS_FILE(file1) && !BACKUP_IS_FILE(file1) && g_file_query_exists(file1, NULL) && (G_FILE_TYPE_REGULAR == g_file_query_file_type(file1, G_FILE_QUERY_INFO_NONE, NULL)), FALSE);
+    g_return_val_if_fail (G_IS_FILE(file1) && !BACKUP_IS_FILE(file1), FALSE);
+    if (!error) { NOT_NULL_RUN(*error, g_error_free); }
 
     char* path = NULL;                  // free
     gboolean ret = FALSE;
@@ -593,6 +603,11 @@ static gboolean vfs_backup (GFile* file1, BackupFile* file2, GError** error)
     STR_FREE(path);
     STR_FREE(mountPoint);
 
+    if (!ret && error) {
+        // printf("set error: %d\n", __LINE__);
+        *error = g_error_new (g_quark_from_static_string(BACKUP_STR), G_IO_ERROR_EXISTS, "%s", g_strdup(""));
+    }
+
     return ret;
     (void) file2;
     (void) error;
@@ -601,6 +616,7 @@ static gboolean vfs_backup (GFile* file1, BackupFile* file2, GError** error)
 static gboolean vfs_restore (BackupFile* file1, GFile* file2, GError** error)
 {
     g_return_val_if_fail (BACKUP_IS_FILE(file1), FALSE);
+    if (!error) { NOT_NULL_RUN(*error, g_error_free); }
 
     char* path = NULL;                  // free
     gboolean ret = FALSE;
@@ -619,6 +635,10 @@ static gboolean vfs_restore (BackupFile* file1, GFile* file2, GError** error)
 
     STR_FREE(path);
     STR_FREE(mountPoint);
+
+    if (!ret && error) {
+        *error = g_error_new (g_quark_from_static_string(BACKUP_STR), G_IO_ERROR_FAILED, "%s", g_strdup(""));
+    }
 
     return ret;
 
@@ -900,7 +920,8 @@ static gboolean do_restore (const char* path, const char* mountPoint)
 
 static gboolean do_backup (const char* path, const char* mountPoint)
 {
-    g_return_val_if_fail (path && mountPoint && (0 == access(path, F_OK)), FALSE);
+    g_return_val_if_fail (path && mountPoint, FALSE);
+    if (0 != access(path, F_OK)) { return FALSE; }
 
     GError* error = NULL;               // free
     gboolean ret = FALSE;

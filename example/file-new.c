@@ -87,9 +87,9 @@ int main (int argc, char* argv[])
     {
         // backup
         GFile* file1 = g_file_new_for_path("/tmp/file5");
-        GFile* file2 = g_file_new_for_uri(BACKUP_STR ":///");
+        GFile* file2 = backup_file_new_for_path("/");
         const gboolean result = g_file_copy(file1, file2, 0, NULL, NULL, NULL, NULL);
-        printf("[Backup] result: %s\n", result ? "true" : "false");
+        printf("[Backup] file5 result: %s\n", result ? "true" : "false");
         g_object_unref(file1);
         g_object_unref(file2);
     }
